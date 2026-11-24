@@ -31,6 +31,7 @@ const logger = pino({
 const sessions = new Map();
 
 let baileysVersion = null;
+let versionPromise = null;
 let shuttingDown = false;
 
 
@@ -45,8 +46,61 @@ function publicState(session) {
     method: session.method,
     qrDataUrl: session.qrDataUrl || undefined,
     pairingCode: session.pairingCode || undefined,
-    phone: session.phone || undefined
+    phone: session.phone || undefined,
+    lastError: session.lastError || undefined
   };
+}
+
+
+/* =========================================
+   ERROR HANDLING
+========================================= */
+
+function getErrorMessage(error) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return String(error || "Unknown error");
+}
+
+
+/* =========================================
+   BAILEYS VERSION
+========================================= */
+
+async function getBaileysVersion() {
+  if (baileysVersion) {
+    return baileysVersion;
+  }
+
+  if (!versionPromise) {
+    versionPromise = (async () => {
+      const result = await fetchLatestBaileysVersion();
+
+      if (
+        !result ||
+        !Array.isArray(result.version)
+      ) {
+        throw new Error(
+          "Baileys could not retrieve the WhatsApp version."
+        );
+      }
+
+      baileysVersion = result.version;
+
+      logger.info(
+        { version: baileysVersion },
+        "Baileys version selected"
+      );
+
+      return baileysVersion;
+    })().finally(() => {
+      versionPromise = null;
+    });
+  }
+
+  return versionPromise;
 }
 
 
@@ -54,8 +108,16 @@ function publicState(session) {
    DATABASE STATUS
 ========================================= */
 
-async function updateDb(session, status, extra = {}) {
+async function updateDb(
+  session,
+  status,
+  extra = {}
+) {
   session.status = status;
+
+  if (extra.error !== undefined) {
+    session.lastError = extra.error || null;
+  }
 
   await query(
     `UPDATE bot_sessions
@@ -73,8 +135,23 @@ async function updateDb(session, status, extra = {}) {
       session.id,
       status,
       extra.phone || null,
-      extra.error || null
+      extra.error !== undefined
+        ? extra.error
+        : null
     ]
+  );
+}
+
+
+/* =========================================
+   SESSION VALIDATION
+========================================= */
+
+function isCurrentSocket(session, socket) {
+  return (
+    sessions.get(session.id) === session &&
+    session.socket === socket &&
+    !session.stopping
   );
 }
 
@@ -99,6 +176,7 @@ async function deleteDefinitiveSession(
 
   const socket = session.socket;
   session.socket = null;
+  session.connecting = false;
 
   try {
     socket?.end?.(new Error(reason));
@@ -112,8 +190,8 @@ async function deleteDefinitiveSession(
   );
 
   logger.warn(
-    { sessionId: session.id },
-    "Definitive logout; auth data deleted"
+    { sessionId: session.id, reason },
+    "Definitive logout; session removed"
   );
 }
 
@@ -126,44 +204,58 @@ async function connectSocket(session) {
   if (
     shuttingDown ||
     session.stopping ||
-    session.connecting
+    session.connecting ||
+    sessions.get(session.id) !== session
   ) {
     return;
   }
 
   session.connecting = true;
 
+  let socket = null;
+
   try {
-    // Get the Baileys version once per process.
-    if (!baileysVersion) {
-      const latest = await fetchLatestBaileysVersion();
+    /*
+     * 1. Retrieve the WhatsApp version.
+     */
 
-      baileysVersion = latest.version;
+    const version = await getBaileysVersion();
 
-      logger.info(
-        { version: baileysVersion },
-        "Baileys version selected"
-      );
-    }
-
-    if (shuttingDown || session.stopping) {
-      session.connecting = false;
+    if (
+      shuttingDown ||
+      session.stopping ||
+      sessions.get(session.id) !== session
+    ) {
       return;
     }
 
-    // Load the user's own encrypted WhatsApp credentials.
+    /*
+     * 2. Load this user's own credentials.
+     */
+
     const {
       state,
       saveCreds
     } = await usePostgresAuthState(session.id);
 
-    if (shuttingDown || session.stopping) {
-      session.connecting = false;
+    if (
+      shuttingDown ||
+      session.stopping ||
+      sessions.get(session.id) !== session
+    ) {
       return;
     }
 
-    const sock = makeWASocket({
-      version: baileysVersion,
+    session.registered = Boolean(
+      state.creds.registered
+    );
+
+    /*
+     * 3. Create WhatsApp socket.
+     */
+
+    socket = makeWASocket({
+      version,
 
       logger: logger.child({
         sessionId: session.id
@@ -182,28 +274,20 @@ async function connectSocket(session) {
       generateHighQualityLinkPreview: false
     });
 
-    session.socket = sock;
-
-    session.registered = Boolean(
-      state.creds.registered
-    );
-
+    session.socket = socket;
     session.qrDataUrl = null;
     session.pairingCode = null;
-    session.connecting = false;
+    session.lastError = null;
 
-    await updateDb(
-      session,
-      session.registered
-        ? "connecting"
-        : "waiting_for_qr"
-    );
+    /*
+     * 4. Save credentials.
+     */
 
-    /* =====================================
-       SAVE AUTH CREDENTIALS
-    ===================================== */
+    socket.ev.on("creds.update", async () => {
+      if (!isCurrentSocket(session, socket)) {
+        return;
+      }
 
-    sock.ev.on("creds.update", async () => {
       session.registered = Boolean(
         state.creds.registered
       );
@@ -218,28 +302,32 @@ async function connectSocket(session) {
           },
           "Could not persist credentials"
         );
+
+        session.lastError = getErrorMessage(error);
       }
     });
 
+    /*
+     * 5. Incoming messages.
+     */
 
-    /* =====================================
-       INCOMING MESSAGES
-    ===================================== */
-
-    sock.ev.on(
+    socket.ev.on(
       "messages.upsert",
       async ({ messages, type }) => {
         if (
           type !== "notify" ||
-          session.stopping ||
-          session.socket !== sock
+          !isCurrentSocket(session, socket)
         ) {
           return;
         }
 
         for (const message of messages || []) {
+          if (!isCurrentSocket(session, socket)) {
+            break;
+          }
+
           try {
-            await handleCommand(sock, message);
+            await handleCommand(socket, message);
           } catch (error) {
             logger.error(
               {
@@ -253,24 +341,20 @@ async function connectSocket(session) {
       }
     );
 
+    /*
+     * 6. Group participant updates.
+     */
 
-    /* =====================================
-       GROUP PARTICIPANTS
-    ===================================== */
-
-    sock.ev.on(
+    socket.ev.on(
       "group-participants.update",
       async update => {
-        if (
-          session.stopping ||
-          session.socket !== sock
-        ) {
+        if (!isCurrentSocket(session, socket)) {
           return;
         }
 
         try {
           await handleParticipantUpdate(
-            sock,
+            socket,
             update
           );
         } catch (error) {
@@ -285,18 +369,14 @@ async function connectSocket(session) {
       }
     );
 
+    /*
+     * 7. Connection events.
+     */
 
-    /* =====================================
-       CONNECTION EVENTS
-    ===================================== */
-
-    sock.ev.on(
+    socket.ev.on(
       "connection.update",
       async update => {
-        if (
-          session.socket !== sock ||
-          session.stopping
-        ) {
+        if (!isCurrentSocket(session, socket)) {
           return;
         }
 
@@ -306,11 +386,13 @@ async function connectSocket(session) {
           qr
         } = update;
 
+        /*
+         * QR CODE
+         */
 
-        // QR CODE
         if (qr) {
           try {
-            session.qrDataUrl = await QRCode.toDataURL(
+            const dataUrl = await QRCode.toDataURL(
               qr,
               {
                 errorCorrectionLevel: "M",
@@ -319,9 +401,17 @@ async function connectSocket(session) {
               }
             );
 
+            if (!isCurrentSocket(session, socket)) {
+              return;
+            }
+
+            session.qrDataUrl = dataUrl;
+            session.pairingCode = null;
+
             await updateDb(
               session,
-              "qr_ready"
+              "qr_ready",
+              { error: null }
             );
           } catch (error) {
             logger.error(
@@ -331,15 +421,20 @@ async function connectSocket(session) {
               },
               "QR rendering failed"
             );
+
+            session.lastError = getErrorMessage(error);
           }
         }
 
+        /*
+         * CONNECTING
+         */
 
-        // CONNECTING
         if (connection === "connecting") {
           await updateDb(
             session,
-            "connecting"
+            "connecting",
+            { error: null }
           ).catch(error => {
             logger.error(
               {
@@ -351,16 +446,25 @@ async function connectSocket(session) {
           });
         }
 
+        /*
+         * CONNECTED
+         */
 
-        // CONNECTED
         if (connection === "open") {
           session.retryCount = 0;
           session.qrDataUrl = null;
           session.pairingCode = null;
+          session.lastError = null;
+
+          if (session.reconnectTimer) {
+            clearTimeout(session.reconnectTimer);
+            session.reconnectTimer = null;
+          }
 
           await updateDb(
             session,
-            "connected"
+            "connected",
+            { error: null }
           ).catch(error => {
             logger.error(
               {
@@ -377,8 +481,10 @@ async function connectSocket(session) {
           );
         }
 
+        /*
+         * CONNECTION CLOSED
+         */
 
-        // CONNECTION CLOSED
         if (connection === "close") {
           const statusCode =
             lastDisconnect
@@ -386,27 +492,30 @@ async function connectSocket(session) {
               ?.output
               ?.statusCode;
 
-          // Remove the old socket reference.
-          // This allows a new socket to be created.
+          const reason =
+            getErrorMessage(lastDisconnect?.error) ||
+            `Socket closed (${statusCode || "unknown"})`;
+
           session.socket = null;
           session.connecting = false;
           session.qrDataUrl = null;
           session.pairingCode = null;
 
+          /*
+           * WhatsApp revoked the linked device.
+           */
 
-          // WhatsApp explicitly logged out.
           if (
             statusCode === DisconnectReason.loggedOut ||
             statusCode === 401
           ) {
             await deleteDefinitiveSession(
               session,
-              "WhatsApp revoked the linked device"
+              reason
             );
 
             return;
           }
-
 
           if (
             shuttingDown ||
@@ -415,10 +524,7 @@ async function connectSocket(session) {
             return;
           }
 
-
-          const reason =
-            lastDisconnect?.error?.message ||
-            `Socket closed (${statusCode || "unknown"})`;
+          session.lastError = reason;
 
           await updateDb(
             session,
@@ -434,16 +540,46 @@ async function connectSocket(session) {
             );
           });
 
-
-          // Automatically reconnect.
           scheduleReconnect(session);
         }
       }
     );
 
+    /*
+     * 8. Initial database status.
+     */
+
+    if (!isCurrentSocket(session, socket)) {
+      return;
+    }
+
+    await updateDb(
+      session,
+      session.registered
+        ? "connecting"
+        : "waiting_for_qr",
+      { error: null }
+    );
+
+    logger.info(
+      { sessionId: session.id },
+      "WhatsApp socket initialized"
+    );
+
   } catch (error) {
-    session.socket = null;
-    session.connecting = false;
+    if (socket) {
+      try {
+        socket.end();
+      } catch {}
+    }
+
+    if (session.socket === socket) {
+      session.socket = null;
+    }
+
+    const reason = getErrorMessage(error);
+
+    session.lastError = reason;
 
     logger.error(
       {
@@ -453,23 +589,43 @@ async function connectSocket(session) {
       "Socket initialization failed"
     );
 
-    await updateDb(
-      session,
-      "reconnecting",
-      {
-        error: error?.message || "Socket initialization failed"
-      }
-    ).catch(dbError => {
-      logger.error(
-        {
-          err: dbError,
-          sessionId: session.id
-        },
-        "Could not save reconnecting status"
-      );
-    });
+    if (
+      !shuttingDown &&
+      !session.stopping &&
+      sessions.get(session.id) === session
+    ) {
+      await updateDb(
+        session,
+        "reconnecting",
+        { error: reason }
+      ).catch(dbError => {
+        logger.error(
+          {
+            err: dbError,
+            sessionId: session.id
+          },
+          "Could not save reconnecting status"
+        );
+      });
+    }
 
-    scheduleReconnect(session);
+  } finally {
+    session.connecting = false;
+
+    /*
+     * If initialization failed before a socket
+     * was established, schedule another attempt.
+     */
+
+    if (
+      !shuttingDown &&
+      !session.stopping &&
+      sessions.get(session.id) === session &&
+      !session.socket &&
+      !session.reconnectTimer
+    ) {
+      scheduleReconnect(session);
+    }
   }
 }
 
@@ -482,7 +638,8 @@ function scheduleReconnect(session) {
   if (
     shuttingDown ||
     session.stopping ||
-    session.reconnectTimer
+    session.reconnectTimer ||
+    sessions.get(session.id) !== session
   ) {
     return;
   }
@@ -515,7 +672,8 @@ function scheduleReconnect(session) {
 
       if (
         shuttingDown ||
-        session.stopping
+        session.stopping ||
+        sessions.get(session.id) !== session
       ) {
         return;
       }
@@ -550,6 +708,22 @@ export async function createSession({
   const existing = sessions.get(id);
 
   if (existing && !existing.stopping) {
+    if (
+      !existing.socket &&
+      !existing.connecting &&
+      !existing.reconnectTimer
+    ) {
+      connectSocket(existing).catch(error => {
+        logger.error(
+          {
+            err: error,
+            sessionId: existing.id
+          },
+          "Could not restart existing session"
+        );
+      });
+    }
+
     return publicState(existing);
   }
 
@@ -573,7 +747,9 @@ export async function createSession({
     connecting: false,
     stopping: false,
 
-    reconnectTimer: null
+    reconnectTimer: null,
+
+    lastError: null
   };
 
   sessions.set(id, session);
@@ -639,24 +815,24 @@ export async function restoreSessions() {
       qrDataUrl: null,
       pairingCode: null,
 
-      registered: true,
+      registered: false,
 
       retryCount: 0,
 
       connecting: false,
       stopping: false,
 
-      reconnectTimer: null
+      reconnectTimer: null,
+
+      lastError: null
     };
 
-    sessions.set(
-      session.id,
-      session
-    );
+    sessions.set(session.id, session);
 
     await updateDb(
       session,
-      "reconnecting"
+      "reconnecting",
+      { error: null }
     ).catch(error => {
       logger.error(
         {
@@ -676,6 +852,8 @@ export async function restoreSessions() {
     { count: restored },
     "Persisted sessions restored"
   );
+
+  return restored;
 }
 
 
@@ -724,7 +902,9 @@ export async function generatePairingCode(
 
   if (!session.socket || session.connecting) {
     const error = new Error(
-      "WhatsApp is initializing. Try again shortly."
+      session.lastError
+        ? `WhatsApp is not ready: ${session.lastError}`
+        : "WhatsApp is initializing. Try again shortly."
     );
 
     error.status = 503;
@@ -749,7 +929,7 @@ export async function generatePairingCode(
   await updateDb(
     session,
     "pairing_code_ready",
-    { phone }
+    { phone, error: null }
   );
 
   return publicState(session);
@@ -781,8 +961,22 @@ export async function refreshQr(id) {
     throw error;
   }
 
-  // Return the latest QR state.
-  // Baileys automatically emits a new QR when required.
+  if (
+    !session.socket &&
+    !session.connecting &&
+    !session.reconnectTimer
+  ) {
+    connectSocket(session).catch(error => {
+      logger.error(
+        {
+          err: error,
+          sessionId: session.id
+        },
+        "QR refresh reconnection failed"
+      );
+    });
+  }
+
   return publicState(session);
 }
 
@@ -795,6 +989,11 @@ export async function logoutSession(id) {
   const session = sessions.get(id);
 
   if (!session) {
+    await query(
+      "DELETE FROM bot_sessions WHERE id = $1",
+      [id]
+    );
+
     return { loggedOut: true };
   }
 
@@ -854,8 +1053,6 @@ export function getLiveSessionByOwner(ownerHash) {
       continue;
     }
 
-    // If the session has no socket and no retry
-    // pending, restart its connection.
     if (
       !session.socket &&
       !session.connecting &&
@@ -897,9 +1094,6 @@ export async function shutdownSockets() {
       clearTimeout(session.reconnectTimer);
       session.reconnectTimer = null;
     }
-
-    // Close network sockets without logging out.
-    // PostgreSQL credentials remain untouched.
 
     const socket = session.socket;
     session.socket = null;
