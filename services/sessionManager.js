@@ -1,9 +1,5 @@
 
-import makeWASocket, {
-  Browsers,
-  DisconnectReason,
-  fetchLatestBaileysVersion
-} from "@whiskeysockets/baileys";
+import * as BaileysModule from "@whiskeysockets/baileys";
 
 import pino from "pino";
 import QRCode from "qrcode";
@@ -23,6 +19,55 @@ import {
   handleParticipantUpdate
 } from "../handler.js";
 
+
+/* =========================================
+   BAILEYS EXPORT COMPATIBILITY
+========================================= */
+
+const baileysDefault = BaileysModule.default;
+
+const makeWASocket = [
+  BaileysModule.makeWASocket,
+  baileysDefault,
+  baileysDefault?.default,
+  baileysDefault?.makeWASocket
+].find(value => typeof value === "function");
+
+const Browsers =
+  BaileysModule.Browsers ||
+  baileysDefault?.Browsers;
+
+const DisconnectReason =
+  BaileysModule.DisconnectReason ||
+  baileysDefault?.DisconnectReason;
+
+const fetchLatestBaileysVersion =
+  BaileysModule.fetchLatestBaileysVersion ||
+  baileysDefault?.fetchLatestBaileysVersion;
+
+if (typeof makeWASocket !== "function") {
+  throw new Error(
+    "Baileys export error: makeWASocket is not a function. " +
+    `Available exports: ${Object.keys(BaileysModule).join(", ")}`
+  );
+}
+
+if (typeof fetchLatestBaileysVersion !== "function") {
+  throw new Error(
+    "Baileys export error: fetchLatestBaileysVersion is unavailable."
+  );
+}
+
+if (!Browsers || typeof Browsers.ubuntu !== "function") {
+  throw new Error(
+    "Baileys export error: Browsers.ubuntu is unavailable."
+  );
+}
+
+
+/* =========================================
+   LOGGER AND SESSION STORAGE
+========================================= */
 
 const logger = pino({
   level: process.env.LOG_LEVEL || "info"
@@ -175,6 +220,7 @@ async function deleteDefinitiveSession(
   }
 
   const socket = session.socket;
+
   session.socket = null;
   session.connecting = false;
 
@@ -216,7 +262,7 @@ async function connectSocket(session) {
 
   try {
     /*
-     * 1. Retrieve the WhatsApp version.
+     * 1. Retrieve WhatsApp version.
      */
 
     const version = await getBaileysVersion();
@@ -230,7 +276,7 @@ async function connectSocket(session) {
     }
 
     /*
-     * 2. Load this user's own credentials.
+     * 2. Load this user's credentials.
      */
 
     const {
@@ -506,7 +552,7 @@ async function connectSocket(session) {
            */
 
           if (
-            statusCode === DisconnectReason.loggedOut ||
+            statusCode === DisconnectReason?.loggedOut ||
             statusCode === 401
           ) {
             await deleteDefinitiveSession(
@@ -613,8 +659,8 @@ async function connectSocket(session) {
     session.connecting = false;
 
     /*
-     * If initialization failed before a socket
-     * was established, schedule another attempt.
+     * Retry if initialization failed before
+     * a socket was established.
      */
 
     if (
