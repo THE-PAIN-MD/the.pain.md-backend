@@ -1,3 +1,4 @@
+
 import makeWASocket, {
   Browsers,
   DisconnectReason,
@@ -7,9 +8,7 @@ import makeWASocket, {
 import pino from "pino";
 import QRCode from "qrcode";
 
-import {
-  query
-} from "../database/pool.js";
+import { query } from "../database/pool.js";
 
 import {
   usePostgresAuthState
@@ -29,59 +28,47 @@ const logger = pino({
   level: process.env.LOG_LEVEL || "info"
 });
 
-
 const sessions = new Map();
 
-let baileysVersion;
-
+let baileysVersion = null;
 let shuttingDown = false;
 
 
-function publicState(session) {
+/* =========================================
+   PUBLIC SESSION STATE
+========================================= */
 
+function publicState(session) {
   return {
     sessionExists: true,
-
     status: session.status,
-
     method: session.method,
-
-    qrDataUrl:
-      session.qrDataUrl || undefined,
-
-    pairingCode:
-      session.pairingCode || undefined,
-
-    phone:
-      session.phone || undefined
+    qrDataUrl: session.qrDataUrl || undefined,
+    pairingCode: session.pairingCode || undefined,
+    phone: session.phone || undefined
   };
-
 }
 
 
-async function updateDb(session, status, extra = {}) {
+/* =========================================
+   DATABASE STATUS
+========================================= */
 
+async function updateDb(session, status, extra = {}) {
   session.status = status;
 
   await query(
     `UPDATE bot_sessions
-
      SET status = $2,
-
          phone = COALESCE($3, phone),
-
          updated_at = NOW(),
-
          last_connected_at =
            CASE
              WHEN $2 = 'connected' THEN NOW()
              ELSE last_connected_at
            END,
-
          last_error = $4
-
      WHERE id = $1`,
-
     [
       session.id,
       status,
@@ -89,32 +76,35 @@ async function updateDb(session, status, extra = {}) {
       extra.error || null
     ]
   );
-
 }
 
+
+/* =========================================
+   DEFINITIVE LOGOUT
+========================================= */
 
 async function deleteDefinitiveSession(
   session,
   reason = "WhatsApp logged out"
 ) {
-
   if (session.stopping) return;
 
   session.stopping = true;
-
   session.status = "logged_out";
 
   if (session.reconnectTimer) {
     clearTimeout(session.reconnectTimer);
+    session.reconnectTimer = null;
   }
 
+  const socket = session.socket;
+  session.socket = null;
+
   try {
-    session.socket?.end?.(new Error(reason));
+    socket?.end?.(new Error(reason));
   } catch {}
 
   sessions.delete(session.id);
-
-  // ON DELETE CASCADE supprime aussi toutes les clés Baileys.
 
   await query(
     "DELETE FROM bot_sessions WHERE id = $1",
@@ -125,24 +115,28 @@ async function deleteDefinitiveSession(
     { sessionId: session.id },
     "Definitive logout; auth data deleted"
   );
-
 }
 
 
+/* =========================================
+   SOCKET CONNECTION
+========================================= */
+
 async function connectSocket(session) {
-
-  if (shuttingDown || session.stopping) return;
-
-  if (session.connecting) return;
+  if (
+    shuttingDown ||
+    session.stopping ||
+    session.connecting
+  ) {
+    return;
+  }
 
   session.connecting = true;
 
   try {
-
+    // Get the Baileys version once per process.
     if (!baileysVersion) {
-
-      const latest =
-        await fetchLatestBaileysVersion();
+      const latest = await fetchLatestBaileysVersion();
 
       baileysVersion = latest.version;
 
@@ -150,18 +144,25 @@ async function connectSocket(session) {
         { version: baileysVersion },
         "Baileys version selected"
       );
-
     }
 
+    if (shuttingDown || session.stopping) {
+      session.connecting = false;
+      return;
+    }
 
+    // Load the user's own encrypted WhatsApp credentials.
     const {
       state,
       saveCreds
     } = await usePostgresAuthState(session.id);
 
+    if (shuttingDown || session.stopping) {
+      session.connecting = false;
+      return;
+    }
 
     const sock = makeWASocket({
-
       version: baileysVersion,
 
       logger: logger.child({
@@ -179,39 +180,37 @@ async function connectSocket(session) {
       syncFullHistory: false,
 
       generateHighQualityLinkPreview: false
-
     });
-
 
     session.socket = sock;
 
-    session.registered =
-      Boolean(state.creds.registered);
+    session.registered = Boolean(
+      state.creds.registered
+    );
 
     session.qrDataUrl = null;
-
+    session.pairingCode = null;
     session.connecting = false;
-
 
     await updateDb(
       session,
-      state.creds.registered
+      session.registered
         ? "connecting"
         : "waiting_for_qr"
     );
 
+    /* =====================================
+       SAVE AUTH CREDENTIALS
+    ===================================== */
 
     sock.ev.on("creds.update", async () => {
-
-      session.registered =
-        Boolean(state.creds.registered);
+      session.registered = Boolean(
+        state.creds.registered
+      );
 
       try {
-
         await saveCreds();
-
       } catch (error) {
-
         logger.error(
           {
             err: error,
@@ -219,29 +218,29 @@ async function connectSocket(session) {
           },
           "Could not persist credentials"
         );
-
       }
-
     });
 
+
+    /* =====================================
+       INCOMING MESSAGES
+    ===================================== */
 
     sock.ev.on(
       "messages.upsert",
       async ({ messages, type }) => {
-
         if (
           type !== "notify" ||
-          session.stopping
-        ) return;
+          session.stopping ||
+          session.socket !== sock
+        ) {
+          return;
+        }
 
         for (const message of messages || []) {
-
           try {
-
             await handleCommand(sock, message);
-
           } catch (error) {
-
             logger.error(
               {
                 err: error,
@@ -249,28 +248,32 @@ async function connectSocket(session) {
               },
               "Message handler failed"
             );
-
           }
-
         }
-
       }
     );
 
 
+    /* =====================================
+       GROUP PARTICIPANTS
+    ===================================== */
+
     sock.ev.on(
       "group-participants.update",
       async update => {
+        if (
+          session.stopping ||
+          session.socket !== sock
+        ) {
+          return;
+        }
 
         try {
-
           await handleParticipantUpdate(
             sock,
             update
           );
-
         } catch (error) {
-
           logger.error(
             {
               err: error,
@@ -278,22 +281,24 @@ async function connectSocket(session) {
             },
             "Participant handler failed"
           );
-
         }
-
       }
     );
 
 
+    /* =====================================
+       CONNECTION EVENTS
+    ===================================== */
+
     sock.ev.on(
       "connection.update",
       async update => {
-
         if (
           session.socket !== sock ||
           session.stopping
-        ) return;
-
+        ) {
+          return;
+        }
 
         const {
           connection,
@@ -302,24 +307,23 @@ async function connectSocket(session) {
         } = update;
 
 
+        // QR CODE
         if (qr) {
-
           try {
-
-            session.qrDataUrl =
-              await QRCode.toDataURL(qr, {
+            session.qrDataUrl = await QRCode.toDataURL(
+              qr,
+              {
                 errorCorrectionLevel: "M",
                 margin: 2,
                 width: 320
-              });
+              }
+            );
 
             await updateDb(
               session,
               "qr_ready"
             );
-
           } catch (error) {
-
             logger.error(
               {
                 err: error,
@@ -327,93 +331,118 @@ async function connectSocket(session) {
               },
               "QR rendering failed"
             );
-
           }
-
         }
 
 
+        // CONNECTING
         if (connection === "connecting") {
-
           await updateDb(
             session,
             "connecting"
-          ).catch(() => {});
-
+          ).catch(error => {
+            logger.error(
+              {
+                err: error,
+                sessionId: session.id
+              },
+              "Could not update connecting status"
+            );
+          });
         }
 
 
+        // CONNECTED
         if (connection === "open") {
-
           session.retryCount = 0;
-
           session.qrDataUrl = null;
-
           session.pairingCode = null;
 
           await updateDb(
             session,
             "connected"
-          );
+          ).catch(error => {
+            logger.error(
+              {
+                err: error,
+                sessionId: session.id
+              },
+              "Could not update connected status"
+            );
+          });
 
           logger.info(
             { sessionId: session.id },
             "WhatsApp session connected"
           );
-
         }
 
 
+        // CONNECTION CLOSED
         if (connection === "close") {
-
           const statusCode =
             lastDisconnect
               ?.error
               ?.output
               ?.statusCode;
 
+          // Remove the old socket reference.
+          // This allows a new socket to be created.
+          session.socket = null;
+          session.connecting = false;
+          session.qrDataUrl = null;
+          session.pairingCode = null;
 
+
+          // WhatsApp explicitly logged out.
           if (
             statusCode === DisconnectReason.loggedOut ||
             statusCode === 401
           ) {
-
             await deleteDefinitiveSession(
               session,
               "WhatsApp revoked the linked device"
             );
 
             return;
-
           }
 
 
           if (
             shuttingDown ||
             session.stopping
-          ) return;
+          ) {
+            return;
+          }
 
+
+          const reason =
+            lastDisconnect?.error?.message ||
+            `Socket closed (${statusCode || "unknown"})`;
 
           await updateDb(
             session,
             "reconnecting",
-            {
-              error:
-                lastDisconnect?.error?.message ||
-                `Socket closed (${statusCode || "unknown"})`
-            }
-          ).catch(() => {});
+            { error: reason }
+          ).catch(error => {
+            logger.error(
+              {
+                err: error,
+                sessionId: session.id
+              },
+              "Could not update reconnecting status"
+            );
+          });
 
 
+          // Automatically reconnect.
           scheduleReconnect(session);
-
         }
-
       }
     );
 
   } catch (error) {
-
+    session.socket = null;
     session.connecting = false;
 
     logger.error(
@@ -428,29 +457,38 @@ async function connectSocket(session) {
       session,
       "reconnecting",
       {
-        error: error.message
+        error: error?.message || "Socket initialization failed"
       }
-    ).catch(() => {});
+    ).catch(dbError => {
+      logger.error(
+        {
+          err: dbError,
+          sessionId: session.id
+        },
+        "Could not save reconnecting status"
+      );
+    });
 
     scheduleReconnect(session);
-
   }
-
 }
 
 
-function scheduleReconnect(session) {
+/* =========================================
+   AUTOMATIC RECONNECTION
+========================================= */
 
+function scheduleReconnect(session) {
   if (
     shuttingDown ||
     session.stopping ||
     session.reconnectTimer
-  ) return;
-
+  ) {
+    return;
+  }
 
   session.retryCount =
     (session.retryCount || 0) + 1;
-
 
   const delay = Math.min(
     30000,
@@ -462,48 +500,62 @@ function scheduleReconnect(session) {
     )
   );
 
+  logger.info(
+    {
+      sessionId: session.id,
+      retry: session.retryCount,
+      delay
+    },
+    "WhatsApp reconnection scheduled"
+  );
 
   session.reconnectTimer = setTimeout(
     async () => {
-
       session.reconnectTimer = null;
 
-      await connectSocket(session);
+      if (
+        shuttingDown ||
+        session.stopping
+      ) {
+        return;
+      }
 
+      await connectSocket(session);
     },
     delay
   );
 
   session.reconnectTimer.unref?.();
-
 }
 
+
+/* =========================================
+   CREATE SESSION
+========================================= */
 
 export async function createSession({
   id,
   ownerHash,
   method
 }) {
-
   if (!["qr", "pair"].includes(method)) {
-
     const error = new Error(
       "Connection method must be qr or pair."
     );
 
     error.status = 400;
-
     throw error;
-
   }
 
+  const existing = sessions.get(id);
+
+  if (existing && !existing.stopping) {
+    return publicState(existing);
+  }
 
   const session = {
-
     id,
-
     ownerHash,
-
     method,
 
     status: "starting",
@@ -511,47 +563,48 @@ export async function createSession({
     socket: null,
 
     qrDataUrl: null,
-
     pairingCode: null,
-
     phone: null,
+
+    registered: false,
 
     retryCount: 0,
 
     connecting: false,
-
     stopping: false,
 
     reconnectTimer: null
-
   };
-
 
   sessions.set(id, session);
 
-
-  await query(
-    `INSERT INTO bot_sessions
-     (id, owner_token_hash, status, method)
-
-     VALUES ($1, $2, 'starting', $3)`,
-    [
-      id,
-      ownerHash,
-      method
-    ]
-  );
-
+  try {
+    await query(
+      `INSERT INTO bot_sessions
+       (id, owner_token_hash, status, method)
+       VALUES ($1, $2, 'starting', $3)`,
+      [
+        id,
+        ownerHash,
+        method
+      ]
+    );
+  } catch (error) {
+    sessions.delete(id);
+    throw error;
+  }
 
   await connectSocket(session);
 
   return publicState(session);
-
 }
 
 
-export async function restoreSessions() {
+/* =========================================
+   RESTORE SAVED SESSIONS
+========================================= */
 
+export async function restoreSessions() {
   const result = await query(
     `SELECT
        id,
@@ -559,17 +612,18 @@ export async function restoreSessions() {
        method,
        phone,
        status
-
      FROM bot_sessions
-
      ORDER BY created_at ASC`
   );
 
+  let restored = 0;
 
   for (const row of result.rows) {
+    if (sessions.has(row.id)) {
+      continue;
+    }
 
     const session = {
-
       id: row.id,
 
       ownerHash: row.owner_token_hash,
@@ -583,128 +637,114 @@ export async function restoreSessions() {
       socket: null,
 
       qrDataUrl: null,
-
       pairingCode: null,
+
+      registered: true,
 
       retryCount: 0,
 
       connecting: false,
-
       stopping: false,
 
       reconnectTimer: null
-
     };
-
 
     sessions.set(
       session.id,
       session
     );
 
-
     await updateDb(
       session,
       "reconnecting"
-    );
-
+    ).catch(error => {
+      logger.error(
+        {
+          err: error,
+          sessionId: session.id
+        },
+        "Could not update restored session"
+      );
+    });
 
     await connectSocket(session);
 
+    restored++;
   }
 
-
   logger.info(
-    { count: result.rowCount },
+    { count: restored },
     "Persisted sessions restored"
   );
-
 }
 
 
-export async function getSession(id) {
+/* =========================================
+   GET SESSION
+========================================= */
 
+export async function getSession(id) {
   const session = sessions.get(id);
 
   return session
     ? publicState(session)
     : null;
-
 }
 
+
+/* =========================================
+   PAIRING CODE
+========================================= */
 
 export async function generatePairingCode(
   id,
   phoneInput
 ) {
-
   const session = sessions.get(id);
 
-
   if (!session || session.stopping) {
-
     const error = new Error(
       "No active session. Create a new session first."
     );
 
     error.status = 404;
-
     throw error;
-
   }
 
-
   if (session.method !== "pair") {
-
     const error = new Error(
       "This session was created using QR Code."
     );
 
     error.status = 409;
-
     throw error;
-
   }
 
+  const phone = normalizePhone(phoneInput);
 
-  const phone =
-    normalizePhone(phoneInput);
-
-
-  if (!session.socket) {
-
+  if (!session.socket || session.connecting) {
     const error = new Error(
       "WhatsApp is initializing. Try again shortly."
     );
 
     error.status = 503;
-
     throw error;
-
   }
 
-
   if (session.registered) {
-
     const error = new Error(
       "This WhatsApp session is already registered."
     );
 
     error.status = 409;
-
     throw error;
-
   }
-
 
   const code =
     await session.socket.requestPairingCode(phone);
 
-
   session.phone = phone;
-
   session.pairingCode = code;
-
 
   await updateDb(
     session,
@@ -712,73 +752,67 @@ export async function generatePairingCode(
     { phone }
   );
 
-
   return publicState(session);
-
 }
 
 
-export async function refreshQr(id) {
+/* =========================================
+   REFRESH QR
+========================================= */
 
+export async function refreshQr(id) {
   const session = sessions.get(id);
 
-
   if (!session || session.stopping) {
-
     const error = new Error(
       "No active session. Create a new session first."
     );
 
     error.status = 404;
-
     throw error;
-
   }
 
-
   if (session.method !== "qr") {
-
     const error = new Error(
       "This session uses Pairing Code."
     );
 
     error.status = 409;
-
     throw error;
-
   }
 
-
+  // Return the latest QR state.
+  // Baileys automatically emits a new QR when required.
   return publicState(session);
-
 }
 
 
-export async function logoutSession(id) {
+/* =========================================
+   LOGOUT SESSION
+========================================= */
 
+export async function logoutSession(id) {
   const session = sessions.get(id);
 
   if (!session) {
     return { loggedOut: true };
   }
 
-
   session.stopping = true;
-
 
   if (session.reconnectTimer) {
     clearTimeout(session.reconnectTimer);
+    session.reconnectTimer = null;
   }
 
+  const socket = session.socket;
+  session.socket = null;
 
   try {
-
-    if (session.socket) {
-      await session.socket.logout();
+    if (socket) {
+      await socket.logout();
     }
-
   } catch (error) {
-
     logger.warn(
       {
         err: error,
@@ -786,78 +820,100 @@ export async function logoutSession(id) {
       },
       "WhatsApp logout request did not complete"
     );
-
   }
 
-
   try {
-
-    session.socket?.end?.(
+    socket?.end?.(
       new Error("User requested logout")
     );
-
   } catch {}
 
-
   sessions.delete(id);
-
 
   await query(
     "DELETE FROM bot_sessions WHERE id = $1",
     [id]
   );
 
-
   return {
     loggedOut: true
   };
-
 }
 
 
+/* =========================================
+   FIND SESSION BY OWNER
+========================================= */
+
 export function getLiveSessionByOwner(ownerHash) {
-
   for (const session of sessions.values()) {
-
     if (
-      session.ownerHash === ownerHash &&
-      !session.stopping
+      session.ownerHash !== ownerHash ||
+      session.stopping
     ) {
-      return session;
+      continue;
     }
 
+    // If the session has no socket and no retry
+    // pending, restart its connection.
+    if (
+      !session.socket &&
+      !session.connecting &&
+      !session.reconnectTimer &&
+      !shuttingDown
+    ) {
+      logger.info(
+        { sessionId: session.id },
+        "Restarting inactive WhatsApp session"
+      );
+
+      connectSocket(session).catch(error => {
+        logger.error(
+          {
+            err: error,
+            sessionId: session.id
+          },
+          "Manual reconnection failed"
+        );
+      });
+    }
+
+    return session;
   }
 
   return null;
-
 }
 
 
-export async function shutdownSockets() {
+/* =========================================
+   SERVER SHUTDOWN
+========================================= */
 
+export async function shutdownSockets() {
   shuttingDown = true;
 
-
   for (const session of sessions.values()) {
-
     if (session.reconnectTimer) {
       clearTimeout(session.reconnectTimer);
+      session.reconnectTimer = null;
     }
 
+    // Close network sockets without logging out.
+    // PostgreSQL credentials remain untouched.
 
-    // Fermer la connexion réseau du processus sans logout WhatsApp.
-    // Les identifiants restent enregistrés dans PostgreSQL.
+    const socket = session.socket;
+    session.socket = null;
 
     try {
-
-      session.socket?.end?.(
+      socket?.end?.(
         new Error(
           "Server shutdown; auth is preserved"
         )
       );
-
     } catch {}
-
   }
 
+  logger.info(
+    "WhatsApp sockets closed; saved sessions preserved"
+  );
 }
