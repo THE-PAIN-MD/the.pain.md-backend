@@ -2,31 +2,27 @@
 export default {
   name: "sudo",
   category: "owner",
-  description: "Ajoute un utilisateur à la liste SUDO.",
   ownerOnly: true,
 
-  async execute(sock, m, args, sessionContext = {}) {
-    const target = m.mentionedJid?.[0] || m.quoted?.sender || args[0]?.replace(/\D/g, "") + "@s.whatsapp.net";
+  async execute(sock, m, args, sessionContext) {
+    const number = (args[0] || "").replace(/\D/g, "");
 
-    if (!target || target === "@s.whatsapp.net") {
-      return m.reply("Mentionne un utilisateur ou donne son numéro.");
+    if (!number) {
+      return m.reply("Utilisation : .sudo 243XXXXXXXXX");
     }
 
-    if (!(global.sudoUsers instanceof Set)) {
-      global.sudoUsers = new Set();
+    const settings = sessionContext.settings;
+
+    if (!settings?.sudoUsers) {
+      return m.reply("❌ Système SUDO indisponible.");
     }
 
-    global.sudoUsers.add(target);
-
-    sessionContext.settings?.sudoUsers?.add(target);
-
-    if (typeof sessionContext.saveSettings === "function") {
-      await sessionContext.saveSettings();
+    if (settings.sudoUsers.has(number)) {
+      return m.reply("⚠️ Ce numéro est déjà SUDO.");
     }
 
-    return m.reply(
-      `╭─❖ 🩸 𝐒𝐔𝐃𝐎 🩸 ❖─╮\n\n│ ͟͟͞ᬼ⃟─► 👤 𝐔𝐬𝐞𝐫 : @${target.split("@")[0]}\n│ ͟͟͞ᬼ⃟─► ✅ 𝐒𝐭𝐚𝐭𝐮𝐭 : SUDO ajouté\n\n╰─────────────❖`,
-      { mentions: [target] }
-    );
+    settings.sudoUsers.add(number);
+
+    return m.reply(`✅ ${number} ajouté à la liste SUDO.`);
   }
 };
