@@ -2,6 +2,16 @@
 import config from "../config.js";
 import { IMAGES } from "../system/botAssets.js";
 
+const channelContext = {
+  isForwarded: true,
+  forwardingScore: 999,
+  forwardedNewsletterMessageInfo: {
+    newsletterJid: "120363422649925479@newsletter",
+    newsletterName: "⏤͟͟͞𝐓𝐇𝐄 亗 𝐏𝐀𝐈𝐍 亗 𝐓𝐄𝐂𝐇᭄",
+    serverMessageId: 1
+  }
+};
+
 export default {
   name: "botinfo",
   category: "general",
@@ -33,13 +43,16 @@ export default {
 ╰─────────────❖
 
 🩸 𝐏𝐀𝐈𝐍 𝐒𝐘𝐒𝐓𝐄𝐌 𝐀𝐂𝐓𝐈𝐕𝐄 🩸
+
+🩸 POWERED BY 𝐓𝐇𝐄 𝐏𝐀𝐈𝐍 🩸
 `;
 
     await sock.sendMessage(
       m.chat,
       {
         image: { url: IMAGES.botinfo },
-        caption: text
+        caption: text,
+        contextInfo: channelContext
       },
       { quoted: m }
     );
