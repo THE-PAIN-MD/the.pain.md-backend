@@ -379,7 +379,15 @@ function matchesIdentity(list, identities) {
   return false;
 }
 
+/*
+ * Le compte WhatsApp connecté est propriétaire de sa session.
+ * Les autres identités autorisées peuvent être ajoutées dans sessionContext.owners.
+ */
 function isOwner(mRaw, sender, sessionContext = {}) {
+  if (mRaw?.key?.fromMe === true) {
+    return true;
+  }
+
   const identities = getSenderAliases(mRaw, sender);
 
   const owners = [
