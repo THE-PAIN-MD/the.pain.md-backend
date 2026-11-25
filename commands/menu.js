@@ -1,22 +1,20 @@
 
 import config from "../config.js";
-import { IMAGES } from "../system/botAssets.js";
-
-const channelContext = {
-  isForwarded: true,
-  forwardingScore: 999,
-  forwardedNewsletterMessageInfo: {
-    newsletterJid: "120363422649925479@newsletter",
-    newsletterName: "⏤͟͟͞𝐓𝐇𝐄 亗 𝐏𝐀𝐈𝐍 亗 𝐓𝐄𝐂𝐇᭄",
-    serverMessageId: 1
-  }
-};
+import { getMenu } from "../handler.js";
+import { AUDIOS } from "../system/botAssets.js";
 
 export default {
-  name: "botinfo",
+  name: "menu",
   category: "general",
+  description: "Affiche le menu principal.",
 
-  async execute(sock, m) {
+  async execute(sock, m, args, sessionContext = {}) {
+    const uptime = Math.floor(process.uptime());
+
+    const h = Math.floor(uptime / 3600);
+    const min = Math.floor((uptime % 3600) / 60);
+    const sec = uptime % 60;
+
     const commands = global.commands;
 
     const commandCount = commands
@@ -25,36 +23,60 @@ export default {
         : Object.keys(commands).length
       : 0;
 
+    const currentMode = String(
+      sessionContext.mode ||
+      sessionContext.botMode ||
+      "private"
+    ).toUpperCase();
+
     const text = `
 ╔══════════════════════╗
-     ☠️ 𝐁𝐎𝐓 𝐈𝐍𝐅𝐎 ☠️
+     ☠️ 𝐓𝐇𝐄 𝐏𝐀𝐈𝐍 𝐌𝐃 ☠️
 ╚══════════════════════╝
 
-╭─❖ 🩸 𝐈𝐍𝐅𝐎𝐒 🩸 ❖─╮
+╭─❖ 🩸 𝐁𝐎𝐓 𝐈𝐍𝐅𝐎 🩸 ❖─╮
 
 │ ͟͟͞ᬼ⃟─► 🤖 𝐁𝐨𝐭 : ${config.BOT_NAME}
 │ ͟͟͞ᬼ⃟─► 👤 𝐔𝐬𝐞𝐫 : ${m.pushName || "Unknown"}
 │ ͟͟͞ᬼ⃟─► 👑 𝐃𝐞𝐯 : ${config.OWNER_NAME}
-│ ͟͟͞ᬼ⃟─► ⚙️ 𝐌𝐨𝐝𝐞 : ${config.MODE}
+│ ͟͟͞ᬼ⃟─► ⚙️ 𝐌𝐨𝐝𝐞 : ${currentMode}
 │ ͟͟͞ᬼ⃟─► 📦 𝐕𝐞𝐫𝐬𝐢𝐨𝐧 : ${config.VERSION}
-│ ͟͟͞ᬼ⃟─► ⏳ 𝐔𝐩𝐭𝐢𝐦𝐞 : ${Math.floor(process.uptime())}s
+│ ͟͟͞ᬼ⃟─► ⏳ 𝐔𝐩𝐭𝐢𝐦𝐞 : ${h}h ${min}m ${sec}s
 │ ͟͟͞ᬼ⃟─► 🧩 𝐂𝐨𝐦𝐦𝐚𝐧𝐝𝐞𝐬 : ${commandCount}
 
 ╰─────────────❖
 
-🩸 𝐏𝐀𝐈𝐍 𝐒𝐘𝐒𝐓𝐄𝐌 𝐀𝐂𝐓𝐈𝐕𝐄 🩸
+${getMenu()}
 
-🩸 POWERED BY 𝐓𝐇𝐄 𝐏𝐀𝐈𝐍 🩸
+╭─❖ 🌐 𝐂𝐇𝐀𝐍𝐍𝐄𝐋 🌐 ❖─╮
+
+│ ͟͟͞ᬼ⃟─► ⏤͟͟͞𝐓𝐇𝐄 亗 𝐏𝐀𝐈𝐍 亗 𝐓𝐄𝐂𝐇᭄
+│ ͟͟͞ᬼ⃟─► ${config.CHANNEL}
+
+╰─────────────❖
+
+🩸 POWERED BY —͟͟͞͞𝐓𝐇𝐄 ➪ 𝐏𝐀𝐈𝐍 ᭄ 🩸
 `;
 
     await sock.sendMessage(
       m.chat,
       {
-        image: { url: IMAGES.botinfo },
-        caption: text,
-        contextInfo: channelContext
+        image: { url: config.MENU_IMAGE },
+        caption: text
       },
       { quoted: m }
     );
+
+    if (AUDIOS.menu) {
+      await sock.sendMessage(
+        m.chat,
+        {
+          audio: { url: AUDIOS.menu },
+          mimetype: "audio/mpeg",
+          ptt: false
+        },
+        { quoted: m }
+      );
+    }
   }
 };
