@@ -22,7 +22,7 @@ import {
   createSessionSettings
 } from "../handler.js";
 
-// Compatible avec les différentes formes d'export ESM de Baileys.
+// Compatibilité avec les différentes formes d'export ESM de Baileys.
 const makeWASocket =
   typeof baileys.default === "function"
     ? baileys.default
@@ -271,6 +271,7 @@ async function connectSocket(session) {
         : "waiting_for_qr"
     );
 
+    // Sauvegarde des identifiants WhatsApp.
     sock.ev.on(
       "creds.update",
       async () => {
@@ -292,9 +293,19 @@ async function connectSocket(session) {
       }
     );
 
+    // Réception et traitement des messages.
     sock.ev.on(
       "messages.upsert",
       async ({ messages, type }) => {
+        logger.info(
+          {
+            sessionId: session.id,
+            type,
+            count: messages?.length || 0
+          },
+          "MESSAGES UPSERT RECEIVED"
+        );
+
         if (
           type !== "notify" ||
           session.stopping
@@ -303,11 +314,38 @@ async function connectSocket(session) {
         }
 
         for (const message of messages || []) {
+          logger.info(
+            {
+              sessionId: session.id,
+              remoteJid: message.key?.remoteJid,
+              fromMe: message.key?.fromMe,
+              hasMessage: Boolean(message.message),
+              messageTypes: message.message
+                ? Object.keys(message.message)
+                : []
+            },
+            "MESSAGE REACHED BOT LISTENER"
+          );
+
           try {
+            logger.info(
+              {
+                sessionId: session.id
+              },
+              "CALLING HANDLE COMMAND"
+            );
+
             await handleCommand(
               sock,
               message,
               session
+            );
+
+            logger.info(
+              {
+                sessionId: session.id
+              },
+              "HANDLE COMMAND COMPLETED"
             );
           } catch (error) {
             logger.error(
@@ -315,13 +353,14 @@ async function connectSocket(session) {
                 err: error,
                 sessionId: session.id
               },
-              "Message handler failed"
+              "MESSAGE HANDLER FAILED"
             );
           }
         }
       }
     );
 
+    // Événements des participants des groupes.
     sock.ev.on(
       "group-participants.update",
       async update => {
@@ -343,6 +382,7 @@ async function connectSocket(session) {
       }
     );
 
+    // État de connexion WhatsApp.
     sock.ev.on(
       "connection.update",
       async update => {
