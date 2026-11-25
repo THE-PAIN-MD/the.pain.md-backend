@@ -1,4 +1,5 @@
-import { getMediaBuffer, sendImage, sharp } from "../../system/media.js";
+
+import { getMediaBuffer, sendImage, sharp } from "../system/media.js";
 
 export default {
   name: "circle",
@@ -7,9 +8,7 @@ export default {
   async execute(sock, m) {
     try {
       const { buffer } = await getMediaBuffer(m, ["image"]);
-
-      const image = sharp(buffer);
-      const metadata = await image.metadata();
+      const metadata = await sharp(buffer).metadata();
 
       const size = Math.min(metadata.width, metadata.height);
 
@@ -24,12 +23,9 @@ export default {
         </svg>
       `);
 
-      const result = await image
+      const result = await sharp(buffer)
         .resize(size, size, { fit: "cover", position: "centre" })
-        .composite([{
-          input: circle,
-          blend: "dest-in"
-        }])
+        .composite([{ input: circle, blend: "dest-in" }])
         .png()
         .toBuffer();
 
