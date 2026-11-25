@@ -1,4 +1,5 @@
-import { getMediaBuffer, convertMedia, sendAudio } from "../../system/media.js";
+
+import { getMediaBuffer, convertMedia, sendAudio } from "../system/media.js";
 
 export default {
   name: "tomp3",
