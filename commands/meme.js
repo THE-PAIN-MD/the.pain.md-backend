@@ -1,9 +1,10 @@
+
 import {
   getMediaBuffer,
   sendImage,
   sharp,
   escapeSvg
-} from "../../system/media.js";
+} from "../system/media.js";
 
 export default {
   name: "meme",
