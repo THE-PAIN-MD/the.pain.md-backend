@@ -1,9 +1,5 @@
 
-import makeWASocket, {
-  Browsers,
-  DisconnectReason,
-  fetchLatestBaileysVersion
-} from "@whiskeysockets/baileys";
+import * as baileys from "@whiskeysockets/baileys";
 
 import pino from "pino";
 import QRCode from "qrcode";
@@ -25,6 +21,38 @@ import {
   handleParticipantUpdate,
   createSessionSettings
 } from "../handler.js";
+
+// Compatible avec les différentes formes d'export ESM de Baileys.
+const makeWASocket =
+  typeof baileys.default === "function"
+    ? baileys.default
+    : typeof baileys.makeWASocket === "function"
+      ? baileys.makeWASocket
+      : typeof baileys.default?.default === "function"
+        ? baileys.default.default
+        : null;
+
+const {
+  Browsers,
+  DisconnectReason,
+  fetchLatestBaileysVersion
+} = baileys;
+
+if (typeof makeWASocket !== "function") {
+  throw new TypeError(
+    "Baileys: makeWASocket export is not a function. Check the installed Baileys version."
+  );
+}
+
+if (
+  !Browsers ||
+  !DisconnectReason ||
+  typeof fetchLatestBaileysVersion !== "function"
+) {
+  throw new Error(
+    "Baileys: required exports are missing. Check the installed package version."
+  );
+}
 
 const logger = pino({
   level: process.env.LOG_LEVEL || "info"
@@ -54,7 +82,9 @@ function serializeSettings(settings = {}) {
   const output = {};
 
   for (const name of SETTING_NAMES) {
-    output[name] = [...(settings[name] || [])];
+    output[name] = [
+      ...(settings[name] || [])
+    ];
   }
 
   return output;
@@ -63,7 +93,9 @@ function serializeSettings(settings = {}) {
 async function saveSessionSettings(session) {
   const saved = {
     ...serializeSettings(session.settings),
-    mode: session.mode === "public" ? "public" : "private"
+    mode: session.mode === "public"
+      ? "public"
+      : "private"
   };
 
   await query(
@@ -78,10 +110,14 @@ async function saveSessionSettings(session) {
   );
 }
 
-async function loadSessionSettings(session, saved = {}) {
-  const data = saved && typeof saved === "object"
-    ? saved
-    : {};
+async function loadSessionSettings(
+  session,
+  saved = {}
+) {
+  const data =
+    saved && typeof saved === "object"
+      ? saved
+      : {};
 
   session.settings = createSessionSettings(data);
 
@@ -108,7 +144,11 @@ function publicState(session) {
   };
 }
 
-async function updateDb(session, status, extra = {}) {
+async function updateDb(
+  session,
+  status,
+  extra = {}
+) {
   session.status = status;
 
   await query(
@@ -143,10 +183,13 @@ async function deleteDefinitiveSession(
 
   if (session.reconnectTimer) {
     clearTimeout(session.reconnectTimer);
+    session.reconnectTimer = null;
   }
 
   try {
-    session.socket?.end?.(new Error(reason));
+    session.socket?.end?.(
+      new Error(reason)
+    );
   } catch {}
 
   sessions.delete(session.id);
@@ -157,25 +200,35 @@ async function deleteDefinitiveSession(
   );
 
   logger.warn(
-    { sessionId: session.id },
+    {
+      sessionId: session.id
+    },
     "Definitive logout; auth data deleted"
   );
 }
 
 async function connectSocket(session) {
-  if (shuttingDown || session.stopping) return;
-  if (session.connecting) return;
+  if (
+    shuttingDown ||
+    session.stopping ||
+    session.connecting
+  ) {
+    return;
+  }
 
   session.connecting = true;
 
   try {
     if (!baileysVersion) {
-      const latest = await fetchLatestBaileysVersion();
+      const latest =
+        await fetchLatestBaileysVersion();
 
       baileysVersion = latest.version;
 
       logger.info(
-        { version: baileysVersion },
+        {
+          version: baileysVersion
+        },
         "Baileys version selected"
       );
     }
@@ -204,7 +257,9 @@ async function connectSocket(session) {
 
     session.socket = sock;
 
-    session.registered = Boolean(state.creds.registered);
+    session.registered = Boolean(
+      state.creds.registered
+    );
 
     session.qrDataUrl = null;
     session.connecting = false;
@@ -216,21 +271,26 @@ async function connectSocket(session) {
         : "waiting_for_qr"
     );
 
-    sock.ev.on("creds.update", async () => {
-      session.registered = Boolean(state.creds.registered);
-
-      try {
-        await saveCreds();
-      } catch (error) {
-        logger.error(
-          {
-            err: error,
-            sessionId: session.id
-          },
-          "Could not persist credentials"
+    sock.ev.on(
+      "creds.update",
+      async () => {
+        session.registered = Boolean(
+          state.creds.registered
         );
+
+        try {
+          await saveCreds();
+        } catch (error) {
+          logger.error(
+            {
+              err: error,
+              sessionId: session.id
+            },
+            "Could not persist credentials"
+          );
+        }
       }
-    });
+    );
 
     sock.ev.on(
       "messages.upsert",
@@ -238,7 +298,9 @@ async function connectSocket(session) {
         if (
           type !== "notify" ||
           session.stopping
-        ) return;
+        ) {
+          return;
+        }
 
         for (const message of messages || []) {
           try {
@@ -287,7 +349,9 @@ async function connectSocket(session) {
         if (
           session.socket !== sock ||
           session.stopping
-        ) return;
+        ) {
+          return;
+        }
 
         const {
           connection,
@@ -297,13 +361,17 @@ async function connectSocket(session) {
 
         if (qr) {
           try {
-            session.qrDataUrl = await QRCode.toDataURL(qr, {
-              errorCorrectionLevel: "M",
-              margin: 2,
-              width: 320
-            });
+            session.qrDataUrl =
+              await QRCode.toDataURL(qr, {
+                errorCorrectionLevel: "M",
+                margin: 2,
+                width: 320
+              });
 
-            await updateDb(session, "qr_ready");
+            await updateDb(
+              session,
+              "qr_ready"
+            );
           } catch (error) {
             logger.error(
               {
@@ -327,10 +395,15 @@ async function connectSocket(session) {
           session.qrDataUrl = null;
           session.pairingCode = null;
 
-          await updateDb(session, "connected");
+          await updateDb(
+            session,
+            "connected"
+          );
 
           logger.info(
-            { sessionId: session.id },
+            {
+              sessionId: session.id
+            },
             "WhatsApp session connected"
           );
         }
@@ -357,7 +430,9 @@ async function connectSocket(session) {
           if (
             shuttingDown ||
             session.stopping
-          ) return;
+          ) {
+            return;
+          }
 
           await updateDb(
             session,
@@ -401,9 +476,12 @@ function scheduleReconnect(session) {
     shuttingDown ||
     session.stopping ||
     session.reconnectTimer
-  ) return;
+  ) {
+    return;
+  }
 
-  session.retryCount = (session.retryCount || 0) + 1;
+  session.retryCount =
+    (session.retryCount || 0) + 1;
 
   const delay = Math.min(
     30000,
@@ -525,7 +603,10 @@ export async function restoreSessions() {
       row.settings || {}
     );
 
-    sessions.set(session.id, session);
+    sessions.set(
+      session.id,
+      session
+    );
 
     await updateDb(
       session,
@@ -536,7 +617,9 @@ export async function restoreSessions() {
   }
 
   logger.info(
-    { count: result.rowCount },
+    {
+      count: result.rowCount
+    },
     "Persisted sessions restored"
   );
 }
@@ -555,7 +638,10 @@ export async function generatePairingCode(
 ) {
   const session = sessions.get(id);
 
-  if (!session || session.stopping) {
+  if (
+    !session ||
+    session.stopping
+  ) {
     const error = new Error(
       "No active session. Create a new session first."
     );
@@ -593,7 +679,8 @@ export async function generatePairingCode(
     throw error;
   }
 
-  const code = await session.socket.requestPairingCode(phone);
+  const code =
+    await session.socket.requestPairingCode(phone);
 
   session.phone = phone;
   session.pairingCode = code;
@@ -610,7 +697,10 @@ export async function generatePairingCode(
 export async function refreshQr(id) {
   const session = sessions.get(id);
 
-  if (!session || session.stopping) {
+  if (
+    !session ||
+    session.stopping
+  ) {
     const error = new Error(
       "No active session. Create a new session first."
     );
@@ -635,13 +725,16 @@ export async function logoutSession(id) {
   const session = sessions.get(id);
 
   if (!session) {
-    return { loggedOut: true };
+    return {
+      loggedOut: true
+    };
   }
 
   session.stopping = true;
 
   if (session.reconnectTimer) {
     clearTimeout(session.reconnectTimer);
+    session.reconnectTimer = null;
   }
 
   try {
@@ -695,6 +788,7 @@ export async function shutdownSockets() {
   for (const session of sessions.values()) {
     if (session.reconnectTimer) {
       clearTimeout(session.reconnectTimer);
+      session.reconnectTimer = null;
     }
 
     try {
