@@ -1,4 +1,5 @@
-import { getMediaBuffer, convertMedia } from "../../system/media.js";
+
+import { getMediaBuffer, convertMedia } from "../system/media.js";
 
 export default {
   name: "tomp4",
