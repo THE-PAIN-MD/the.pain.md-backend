@@ -1,3 +1,4 @@
+
 export default {
   name: "caption",
   category: "media",
@@ -58,7 +59,9 @@ export default {
         throw new Error("Aucune légende générée.");
       }
 
-      await m.reply(`📝 *𝐂𝐀𝐏𝐓𝐈𝐎𝐍*\n\n${caption}\n\n🩸 𝐓𝐇𝐄 𝐏𝐀𝐈𝐍 𝐌𝐃`);
+      await m.reply(
+        `📝 *𝐂𝐀𝐏𝐓𝐈𝐎𝐍*\n\n${caption}\n\n🩸 𝐓𝐇𝐄 𝐏𝐀𝐈𝐍 𝐌𝐃`
+      );
     } catch (err) {
       await m.reply(`❌ ${err.message}`);
     }
