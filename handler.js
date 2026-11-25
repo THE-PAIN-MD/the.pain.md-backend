@@ -448,7 +448,7 @@ async function getGroupRoles(sock, from, mRaw, sender) {
   };
 }
 
-function getCurrentMode(sessionContext) {
+function getCurrentMode(sessionContext = {}) {
   const mode = String(
     sessionContext.mode ||
     sessionContext.botMode ||
@@ -459,7 +459,6 @@ function getCurrentMode(sessionContext) {
   return mode === "public" ? "public" : "private";
 }
 
-// Anti-spam state is isolated by session, group and sender.
 const spamState = new Map();
 
 async function handleAutomaticFeatures(
@@ -493,14 +492,11 @@ async function handleAutomaticFeatures(
   if (needsMetadata) {
     try {
       roles = await getGroupRoles(sock, from, mRaw, sender);
-    } catch {
-      // No metadata: do not apply destructive moderation.
-    }
+    } catch {}
   }
 
   const exempt = owner || sudo || roles.actorAdmin;
 
-  // Anti-link: only non-admin members are affected.
   if (
     isGroup &&
     settings.antilinkGroups.has(from) &&
@@ -519,7 +515,6 @@ async function handleAutomaticFeatures(
     return true;
   }
 
-  // Anti-spam: flag rapid bursts; it does not automatically ban users.
   if (
     isGroup &&
     settings.antispamGroups.has(from) &&
@@ -546,7 +541,6 @@ async function handleAutomaticFeatures(
     }
   }
 
-  // WhatsApp does not expose a reliable bot flag for all participants.
   if (
     isGroup &&
     settings.antibotGroups.has(from) &&
@@ -564,7 +558,6 @@ async function handleAutomaticFeatures(
     }
   }
 
-  // Anti-fake: only applies when an allowed country prefix is configured.
   if (isGroup && roles.botAdmin && !exempt) {
     const rule = [...settings.antifakeGroups].find(
       item => item.startsWith(`${from}|`)
@@ -588,7 +581,6 @@ async function handleAutomaticFeatures(
     }
   }
 
-  // Presence features.
   if (settings.autotypingChats.has(from)) {
     try {
       await sock.sendPresenceUpdate("composing", from);
@@ -601,7 +593,6 @@ async function handleAutomaticFeatures(
     } catch {}
   }
 
-  // Random reaction.
   if (settings.autoreactChats.has(from)) {
     const reactions = ["❤️", "🔥", "✨", "💯", "🩸", "⚡", "👀"];
     const reaction = reactions[
@@ -647,6 +638,18 @@ async function checkCommandPermissions(
   return { allowed: true };
 }
 
+function findCommand(name) {
+  const direct = commands[name];
+  if (direct) return direct;
+
+  return Object.values(commands).find(command =>
+    Array.isArray(command.aliases) &&
+    command.aliases.some(alias =>
+      String(alias).toLowerCase() === name
+    )
+  );
+}
+
 export async function handleCommand(
   sock,
   mRaw,
@@ -662,7 +665,7 @@ export async function handleCommand(
     const body = getMessageText(mRaw.message).trim();
     if (!body) return;
 
-    const settings = sessionContext.settings || defaultSettings;
+    const settings = sessionContext.settings || createSessionSettings();
 
     const autoRead =
       sessionContext.autoRead ??
@@ -675,7 +678,6 @@ export async function handleCommand(
       } catch {}
     }
 
-    // Run protections and automatic settings on all incoming messages.
     const blocked = await handleAutomaticFeatures(
       sock,
       mRaw,
@@ -702,7 +704,7 @@ export async function handleCommand(
     if (!commandName) return;
 
     const args = parts;
-    const command = commands[commandName];
+    const command = findCommand(commandName);
     if (!command) return;
 
     const isGroup = from.endsWith("@g.us");
@@ -819,7 +821,7 @@ export async function handleParticipantUpdate(
 ) {
   try {
     const { id, participants, action } = update;
-    const settings = sessionContext.settings || defaultSettings;
+    const settings = sessionContext.settings || createSessionSettings();
 
     if (!id || !id.endsWith("@g.us")) return;
 
