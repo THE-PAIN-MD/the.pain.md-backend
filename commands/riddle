@@ -1,0 +1,40 @@
+
+const riddles = [
+  {
+    question: "Je peux faire le tour du monde en restant dans un coin. Qui suis-je ?",
+    answer: "Un timbre."
+  },
+  {
+    question: "Plus je sèche, plus je deviens mouillée. Qui suis-je ?",
+    answer: "Une serviette."
+  },
+  {
+    question: "J'ai des touches mais aucune porte. Qui suis-je ?",
+    answer: "Un clavier."
+  },
+  {
+    question: "Je monte et je descends sans jamais bouger. Qui suis-je ?",
+    answer: "Un escalier."
+  },
+  {
+    question: "Qu'est-ce qui a un cou mais pas de tête ?",
+    answer: "Une bouteille."
+  }
+];
+
+export default {
+  name: "riddle",
+  category: "FUN",
+  description: "Proposer une devinette",
+
+  async execute(sock, m) {
+    const riddle = riddles[Math.floor(Math.random() * riddles.length)];
+
+    await m.reply(
+      `╭─❖ 🧩 𝐑𝐈𝐃𝐃𝐋𝐄 ❖─╮\n\n` +
+      `${riddle.question}\n\n` +
+      `Réponse : ${riddle.answer}\n\n` +
+      `╰─────────────❖`
+    );
+  }
+};
