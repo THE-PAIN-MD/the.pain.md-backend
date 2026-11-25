@@ -1,4 +1,5 @@
-import { getMediaBuffer, sendImage, sharp } from "../../system/media.js";
+
+import { getMediaBuffer, sendImage, sharp } from "../system/media.js";
 
 export default {
   name: "remini",
@@ -7,7 +8,6 @@ export default {
   async execute(sock, m) {
     try {
       const { buffer } = await getMediaBuffer(m, ["image"]);
-
       const metadata = await sharp(buffer).metadata();
 
       const result = await sharp(buffer)
@@ -22,12 +22,7 @@ export default {
         .jpeg({ quality: 95 })
         .toBuffer();
 
-      await sendImage(
-        sock,
-        m,
-        result,
-        "✨ Image améliorée par THE PAIN MD"
-      );
+      await sendImage(sock, m, result, "✨ Image améliorée par THE PAIN MD");
     } catch (err) {
       await m.reply(`❌ ${err.message}`);
     }
