@@ -1,4 +1,5 @@
-import { getMediaBuffer, sendImage, sharp } from "../../system/media.js";
+
+import { getMediaBuffer, sendImage, sharp } from "../system/media.js";
 
 export default {
   name: "blur",
