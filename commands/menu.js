@@ -1,20 +1,24 @@
 
 import config from "../config.js";
-import { getMenu } from "../handler.js";
-import { AUDIOS } from "../system/botAssets.js";
+import { IMAGES } from "../system/botAssets.js";
+
+const channelContext = {
+  isForwarded: true,
+  forwardingScore: 999,
+  forwardedNewsletterMessageInfo: {
+    newsletterJid: "120363422649925479@newsletter",
+    newsletterName: "⏤͟͟͞𝐓𝐇𝐄 亗 𝐏𝐀𝐈𝐍 亗 𝐓𝐄𝐂𝐇᭄",
+    serverMessageId: 1
+  }
+};
 
 export default {
-  name: "menu",
+  name: "botinfo",
   category: "general",
 
   async execute(sock, m) {
-    const uptime = Math.floor(process.uptime());
-
-    const h = Math.floor(uptime / 3600);
-    const min = Math.floor((uptime % 3600) / 60);
-    const sec = uptime % 60;
-
     const commands = global.commands;
+
     const commandCount = commands
       ? commands instanceof Map
         ? commands.size
@@ -23,51 +27,34 @@ export default {
 
     const text = `
 ╔══════════════════════╗
-     ☠️ 𝐓𝐇𝐄 𝐏𝐀𝐈𝐍 𝐌𝐃 ☠️
+     ☠️ 𝐁𝐎𝐓 𝐈𝐍𝐅𝐎 ☠️
 ╚══════════════════════╝
 
-╭─❖ 🩸 𝐁𝐎𝐓 𝐈𝐍𝐅𝐎 🩸 ❖─╮
+╭─❖ 🩸 𝐈𝐍𝐅𝐎𝐒 🩸 ❖─╮
 
 │ ͟͟͞ᬼ⃟─► 🤖 𝐁𝐨𝐭 : ${config.BOT_NAME}
 │ ͟͟͞ᬼ⃟─► 👤 𝐔𝐬𝐞𝐫 : ${m.pushName || "Unknown"}
 │ ͟͟͞ᬼ⃟─► 👑 𝐃𝐞𝐯 : ${config.OWNER_NAME}
 │ ͟͟͞ᬼ⃟─► ⚙️ 𝐌𝐨𝐝𝐞 : ${config.MODE}
 │ ͟͟͞ᬼ⃟─► 📦 𝐕𝐞𝐫𝐬𝐢𝐨𝐧 : ${config.VERSION}
-│ ͟͟͞ᬼ⃟─► ⏳ 𝐔𝐩𝐭𝐢𝐦𝐞 : ${h}h ${min}m ${sec}s
+│ ͟͟͞ᬼ⃟─► ⏳ 𝐔𝐩𝐭𝐢𝐦𝐞 : ${Math.floor(process.uptime())}s
 │ ͟͟͞ᬼ⃟─► 🧩 𝐂𝐨𝐦𝐦𝐚𝐧𝐝𝐞𝐬 : ${commandCount}
 
 ╰─────────────❖
 
-${getMenu()}
+🩸 𝐏𝐀𝐈𝐍 𝐒𝐘𝐒𝐓𝐄𝐌 𝐀𝐂𝐓𝐈𝐕𝐄 🩸
 
-╭─❖ 🌐 𝐂𝐇𝐀𝐍𝐍𝐄𝐋 🌐 ❖─╮
-
-│ ͟͟͞ᬼ⃟─► ⏤͟͟͞𝐓𝐇𝐄 亗 𝐏𝐀𝐈𝐍 亗 𝐓𝐄𝐂𝐇᭄
-
-╰─────────────❖
-
-🩸 POWERED BY —͟͟͞͞𝐓𝐇𝐄 ➪ 𝐏𝐀𝐈𝐍 ᭄ 🩸
+🩸 POWERED BY 𝐓𝐇𝐄 𝐏𝐀𝐈𝐍 🩸
 `;
 
     await sock.sendMessage(
       m.chat,
       {
-        image: { url: config.MENU_IMAGE },
-        caption: text
+        image: { url: IMAGES.botinfo },
+        caption: text,
+        contextInfo: channelContext
       },
       { quoted: m }
     );
-
-    if (AUDIOS.menu) {
-      await sock.sendMessage(
-        m.chat,
-        {
-          audio: { url: AUDIOS.menu },
-          mimetype: "audio/mpeg",
-          ptt: false
-        },
-        { quoted: m }
-      );
-    }
   }
 };
