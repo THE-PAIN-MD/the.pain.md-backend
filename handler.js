@@ -154,37 +154,28 @@ export function getMenu() {
     grouped[normalizeCategory(command.category)].push(command);
   }
 
-  let output = `
-╭━━〔 🩸 𝐓𝐇𝐄 𝐏𝐀𝐈𝐍 𝐌𝐃 〕━━╮
-│
-│ 𝐕𝐄𝐑𝐒𝐈𝐎𝐍 : ${config.VERSION}
-│ 𝐃𝐄𝐕 : ${PAIN.owner}
-│ 𝐓𝐎𝐓𝐀𝐋 : ${Object.keys(commands).length} COMMANDES
-│
-╰━━━━━━━━━━━━━━━━━━━━━━╯
-`;
+  let output = "";
 
   for (const category of CATEGORY_ORDER) {
     const list = grouped[category].sort((a, b) =>
       String(a.name).localeCompare(String(b.name))
     );
 
-    output += `\n╭━━〔 ${CATEGORY_STYLES[category]} ${CATEGORY_LABELS[category]} 〕━━╮\n`;
+    const emoji = CATEGORY_STYLES[category];
+    const label = CATEGORY_LABELS[category];
+
+    output += `\n╭─❖ ${emoji} ${label} ${emoji} ❖─╮\n`;
 
     if (!list.length) {
       output += "│ Aucune commande disponible\n";
     } else {
       for (const command of list) {
-        output += `│ ➤ ${config.PREFIX}${command.name.toUpperCase()}\n`;
+        output += `│ ͟͟͞ᬼ⃟─► ${config.PREFIX}${command.name.toLowerCase()}\n`;
       }
     }
 
-    output += "╰━━━━━━━━━━━━━━━━━━━━━━╯\n";
+    output += "╰─────────────❖\n";
   }
-
-  output += `\n╭━━〔 🩸 𝐏𝐀𝐈𝐍 𝐒𝐘𝐒𝐓𝐄𝐌 〕━━╮
-│ ${PAIN.signature}
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━╯`;
 
   return output.trim();
 }
