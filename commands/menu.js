@@ -3,6 +3,16 @@ import config from "../config.js";
 import { getMenu } from "../handler.js";
 import { AUDIOS } from "../system/botAssets.js";
 
+const channelContext = {
+  isForwarded: true,
+  forwardingScore: 999,
+  forwardedNewsletterMessageInfo: {
+    newsletterJid: "120363422649925479@newsletter",
+    newsletterName: "⏤͟͟͞𝐓𝐇𝐄 亗 𝐏𝐀𝐈𝐍 亗 𝐓𝐄𝐂𝐇᭄",
+    serverMessageId: 1
+  }
+};
+
 export default {
   name: "menu",
   category: "general",
@@ -30,10 +40,6 @@ export default {
     ).toUpperCase();
 
     const text = `
-╔══════════════════════╗
-     ☠️ 𝐓𝐇𝐄 𝐏𝐀𝐈𝐍 𝐌𝐃 ☠️
-╚══════════════════════╝
-
 ╭─❖ 🩸 𝐁𝐎𝐓 𝐈𝐍𝐅𝐎 🩸 ❖─╮
 
 │ ͟͟͞ᬼ⃟─► 🤖 𝐁𝐨𝐭 : ${config.BOT_NAME}
@@ -48,21 +54,15 @@ export default {
 
 ${getMenu()}
 
-╭─❖ 🌐 𝐂𝐇𝐀𝐍𝐍𝐄𝐋 🌐 ❖─╮
-
-│ ͟͟͞ᬼ⃟─► ⏤͟͟͞𝐓𝐇𝐄 亗 𝐏𝐀𝐈𝐍 亗 𝐓𝐄𝐂𝐇᭄
-│ ͟͟͞ᬼ⃟─► ${config.CHANNEL}
-
-╰─────────────❖
-
-🩸 POWERED BY —͟͟͞͞𝐓𝐇𝐄 ➪ 𝐏𝐀𝐈𝐍 ᭄ 🩸
+> 🩸 POWERED BY —͟͟͞͞𝐓𝐇𝐄 ➪ 𝐏𝐀𝐈𝐍 ᭄ 🩸
 `;
 
     await sock.sendMessage(
       m.chat,
       {
         image: { url: config.MENU_IMAGE },
-        caption: text
+        caption: text,
+        contextInfo: channelContext
       },
       { quoted: m }
     );
